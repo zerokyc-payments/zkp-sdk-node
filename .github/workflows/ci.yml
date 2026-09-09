@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install (npm ci)
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test with coverage gate (webhooks/replay >= 90%)
+        run: npx vitest run --coverage --coverage.include='src/webhooks/**' --coverage.include='src/replay.ts' --coverage.thresholds.lines=90 --coverage.thresholds.functions=90 --coverage.thresholds.branches=85
+
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build and pack
+        run: |
+          npm ci
+          npm run build
+          npm pack --dry-run
+
+      - name: Tarball ships only dist + docs (no tests, no js maps, no secrets)
+        run: |
+          npm pack
+          tar -tzf zkp-sdk-node-*.tgz > files.txt
+          ! grep -E "tests/|examples/|coverage/|node_modules/" files.txt
+          ! grep -E "\.js\.map$" files.txt
+          # declaration maps are REQUIRED (PEP-561-style contract): relative
+          # sources only - fail on any absolute/local path inside them
+          ! grep -rlE '"sources":\s*\["[A-Za-z]:' dist --include="*.d.ts.map"
+          ! grep -Ei "secret|password|api[_-]?key" files.txt
+
+      - name: Clean import in ESM and CommonJS projects
+        run: |
+          mkdir -p /tmp/esm /tmp/cjs
+          cd /tmp/esm
+          npm init -y >/dev/null
+          npm install "$OLDPWD/zkp-sdk-node-*.tgz" >/dev/null
+          echo '{"type":"module"}' > check.mjs
+          node --input-type=module -e "import('zkp-sdk-node').then(m => { if (typeof m.ZeroKYC !== 'function' || m.VERSION !== '0.1.0') process.exit(1); console.log('ESM import OK'); })"
+          cd /tmp/cjs
+          npm init -y >/dev/null
+          npm install "$OLDPWD/zkp-sdk-node-*.tgz" >/dev/null
+          node -e "const m = require('zkp-sdk-node'); if (typeof m.ZeroKYC !== 'function' || m.VERSION !== '0.1.0') process.exit(1); console.log('CJS require OK');"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: zkp-sdk-node-*.tgz

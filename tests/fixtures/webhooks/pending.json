@@ -1,0 +1,22 @@
+{
+    "id": "evt_fixture_detected",
+    "type": "payment.detected",
+    "created_at": "2026-09-08T18:43:00Z",
+    "data": {
+        "invoice_id": "inv_fixture_004",
+        "order_id": "INV-1045",
+        "amount": "19.90",
+        "base_currency": "USD",
+        "option": {
+            "asset": "BTC",
+            "network": "bitcoin",
+            "amount_crypto": "0.0002",
+            "paid_amount": "0.0002"
+        },
+        "tx": {
+            "tx_hash": "9a8b7c6d",
+            "confirmations": 0
+        },
+        "metadata": {}
+    }
+}

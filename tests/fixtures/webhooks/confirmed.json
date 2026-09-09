@@ -1,0 +1,22 @@
+{
+    "id": "evt_fixture_confirmed",
+    "type": "payment.confirmed",
+    "created_at": "2026-09-08T18:40:00Z",
+    "data": {
+        "invoice_id": "inv_fixture_001",
+        "order_id": "INV-1042",
+        "amount": "19.90",
+        "base_currency": "USD",
+        "option": {
+            "asset": "USDT",
+            "network": "tron",
+            "amount_crypto": "19.9",
+            "paid_amount": "19.9"
+        },
+        "tx": {
+            "tx_hash": "abc123def456",
+            "confirmations": 20
+        },
+        "metadata": {}
+    }
+}
