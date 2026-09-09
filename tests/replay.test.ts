@@ -173,6 +173,34 @@ describe("ReplayGuard", () => {
   });
 
 
+
+  it("compares leading-zero decimals correctly (normalize before length)", () => {
+    expect(Math.sign(compareDecimals("0002", "10"))).toBe(-1);
+    expect(Math.sign(compareDecimals("10", "0002"))).toBe(1);
+    expect(compareDecimals("00010", "10")).toBe(0);
+    expect(compareDecimals("0000.50", "0.5")).toBe(0);
+    expect(compareDecimals("000000", "0")).toBe(0);
+    expect(compareDecimals("0010.000", "10")).toBe(0);
+    expect(Math.sign(compareDecimals("00020.5", "19.90"))).toBe(1);
+  });
+
+  it("a leading-zero paid amount is never enough for a bigger order", () => {
+    const guard = new ReplayGuard(new InMemoryEventStore());
+    const event = WebhookEvent.fromJson({
+      id: "e",
+      type: "payment.confirmed",
+      data: { invoice_id: "i", option: { asset: "USDT", network: "tron", paid_amount: "0002" } },
+    });
+    expect(guard.matchesOrder(event, "i", { minAmount: "10" })).toBe(false);
+    // and the opposite direction is still accepted
+    const rich = WebhookEvent.fromJson({
+      id: "e2",
+      type: "payment.confirmed",
+      data: { invoice_id: "i", option: { asset: "USDT", network: "tron", paid_amount: "00020.5" } },
+    });
+    expect(guard.matchesOrder(rich, "i", { minAmount: "19.90" })).toBe(true);
+  });
+
   it("throws on invalid decimal strings instead of comparing silently", () => {
     for (const bad of ["NaN", "Infinity", "abc", "1e3", "1.2.3", "", " 20 ", "-1", "1E-2", "12.", ".99"]) {
       expect(() => compareDecimals(bad, "1")).toThrowError(TypeError);

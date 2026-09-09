@@ -46,9 +46,13 @@ export function compareDecimals(a: string, b: string): number {
   }
   const [ai = "0", af = ""] = a.split(".");
   const [bi = "0", bf = ""] = b.split(".");
+  // normalize BEFORE comparing: leading zeros must not affect length/value
+  // ("0002" is 2, not a 4-digit number greater than "10")
   const norm = (s: string): string => s.replace(/^0+(?=\d)/, "");
+  const nAi = norm(ai);
+  const nBi = norm(bi);
   const intCmp =
-    ai.length !== bi.length ? ai.length - bi.length : norm(ai).localeCompare(norm(bi));
+    nAi.length !== nBi.length ? nAi.length - nBi.length : nAi.localeCompare(nBi);
   const fracCmp = af.padEnd(bf.length, "0").localeCompare(bf.padEnd(af.length, "0"));
   return intCmp || fracCmp; // never -0 (0 stays 0 via ||)
 }

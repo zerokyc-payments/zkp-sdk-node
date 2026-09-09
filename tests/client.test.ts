@@ -128,9 +128,47 @@ describe("ZeroKYC client", () => {
     await expect(sdk.getInvoice("inv_1")).rejects.toThrowError("boom");
   });
 
-  it("rejects invoice envelopes missing required fields", async () => {
-    const { sdk } = makeSdk(() => jsonResponse(200, { order_id: "x" }));
-    await expect(sdk.getInvoice("inv_1")).rejects.toThrowError(/missing required field 'id'/);
+  it("rejects invalid invoice envelopes with field-specific errors", async () => {
+    // one mutated field per case, everything else valid
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ id: "" }, /field 'id'/],
+      [{ status: 123 }, /field 'status' must be a non-empty string/],
+      [{ amount: 123 }, /field 'amount' must be a decimal string/],
+      [{ amount: "NaN" }, /field 'amount' must be a decimal string/],
+      [{ amount: "1e3" }, /field 'amount' must be a decimal string/],
+      [{ options: "bad" }, /field 'options' must be an array/],
+      [{ observations: {} }, /field 'observations' must be an array/],
+      [{ metadata: [] }, /field 'metadata' must be a JSON object/],
+      [{ ttl_minutes: "360" }, /field 'ttl_minutes' must be an integer/],
+      [{ paid_amount: 10 }, /'paid_amount' must be a decimal string or null/],
+      [{ paid_asset: {} }, /'paid_asset' must be a string or null/],
+      [{ order_id: 5 }, /'order_id' must be a string or null/],
+      [{
+        options: [{ asset: "USDT_TRON", network: "tron", payment_address: "T",
+                    amount_crypto: "1.5", rate: "1", status: 5 }],
+      }, /options\[0\]\.status/],
+      [{
+        options: [{ asset: "USDT_TRON", network: "tron", payment_address: "T",
+                    amount_crypto: 1.5, rate: "1", status: "open" }],
+      }, /options\[0\]\.amount_crypto/],
+    ];
+    for (const [overrides, pattern] of cases) {
+      const payload = { ...invoicePayload(), ...overrides };
+      const { sdk } = makeSdk(() => jsonResponse(200, payload));
+      await expect(sdk.getInvoice("inv_1")).rejects.toThrowError(pattern);
+    }
+  });
+
+  it("accepts a fully valid invoice response and keeps unknown fields in raw", async () => {
+    const { sdk } = makeSdk(() =>
+      jsonResponse(200, invoicePayload({ future_field: { nested: true } })),
+    );
+    const invoice = await sdk.getInvoice("inv_123");
+    expect(invoice.amount).toBe("19.90");
+    expect(typeof invoice.amount).toBe("string");
+    expect(Array.isArray(invoice.options)).toBe(true);
+    expect(typeof invoice.ttlMinutes).toBe("number");
+    expect(invoice.raw["future_field"]).toEqual({ nested: true });
   });
 });
 

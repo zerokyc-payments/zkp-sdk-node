@@ -45,58 +45,52 @@ export function httpResponse(
 }
 
 /**
- * AbortSignal.any() equivalent for Node 20.0-20.2 (added in 20.3): a signal
- * that fires as soon as any input fires. Keeps the runtime floor at plain 20.
+ * Built-in fetch transport: per-request timeout via AbortController, caller
+ * aborts forwarded into the same controller (original reason preserved),
+ * redirect: "manual" - a 3xx must surface (same rule as the PHP/Python SDKs).
+ * Listener and timer lifecycles are leak-free: everything is cleaned in
+ * finally, so a reused caller signal never accumulates handlers.
  */
-export function combineSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
-  if (!a) {
-    return b;
-  }
-  if (!b) {
-    return a;
-  }
-  if (a.aborted) {
-    return a;
-  }
-  if (b.aborted) {
-    return b;
-  }
-  const combined = new AbortController();
-  const onAbort = (): void => combined.abort();
-  a.addEventListener("abort", onAbort, { once: true });
-  b.addEventListener("abort", onAbort, { once: true });
-  return combined.signal;
-}
-
 export async function fetchTransport(url: string, init: FetchInit): Promise<HttpResponse> {
+  // ONE request controller: caller aborts are forwarded into it, and the
+  // forwarding listener plus the timeout timer are always removed in finally
+  // (a reused caller signal must never accumulate listeners).
   const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(new Error("request timeout")),
-    init.timeoutMs ?? 15_000,
-  );
-  const signal = combineSignals(init.signal, controller.signal);
+  const timer = setTimeout(() => {
+    controller.abort(new Error("request timeout"));
+  }, init.timeoutMs ?? 15_000);
 
-  let response: Response;
+  const caller = init.signal;
+  const onCallerAbort = (): void => {
+    // surface the caller's own abort reason, not a generic one
+    controller.abort(caller?.reason);
+  };
+  if (caller?.aborted) {
+    clearTimeout(timer);
+    throw new NetworkError(`transport failure: ${String(caller.reason ?? "aborted")}`);
+  }
+  caller?.addEventListener("abort", onCallerAbort, { once: true });
+
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       method: init.method,
       headers: init.headers,
       body: init.body,
-      signal,
+      signal: controller.signal,
       redirect: "manual",
     });
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+    return httpResponse(response.status, await response.text(), headers);
   } catch (e) {
     // fetch rejects on network/timeout/abort; DNS/connect arrive as TypeError
     throw new NetworkError(`transport failure: ${(e as Error).message}`);
   } finally {
     clearTimeout(timer);
+    caller?.removeEventListener("abort", onCallerAbort);
   }
-
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
-  return httpResponse(response.status, await response.text(), headers);
 }
 
 /** Identifiable SDK user agent (CDNs commonly block library default UAs). */
