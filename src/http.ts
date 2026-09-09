@@ -44,15 +44,37 @@ export function httpResponse(
   };
 }
 
+/**
+ * AbortSignal.any() equivalent for Node 20.0-20.2 (added in 20.3): a signal
+ * that fires as soon as any input fires. Keeps the runtime floor at plain 20.
+ */
+export function combineSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
+  if (!a) {
+    return b;
+  }
+  if (!b) {
+    return a;
+  }
+  if (a.aborted) {
+    return a;
+  }
+  if (b.aborted) {
+    return b;
+  }
+  const combined = new AbortController();
+  const onAbort = (): void => combined.abort();
+  a.addEventListener("abort", onAbort, { once: true });
+  b.addEventListener("abort", onAbort, { once: true });
+  return combined.signal;
+}
+
 export async function fetchTransport(url: string, init: FetchInit): Promise<HttpResponse> {
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error("request timeout")),
     init.timeoutMs ?? 15_000,
   );
-  const signal = init.signal
-    ? AbortSignal.any([init.signal, controller.signal])
-    : controller.signal;
+  const signal = combineSignals(init.signal, controller.signal);
 
   let response: Response;
   try {

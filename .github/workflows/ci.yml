@@ -13,7 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['20.3.0', 22, 24] # 20.3.0 is the minimum (AbortSignal.any)
+        node: [20, 22, 24] # SDK runtime floor is plain 20; vitest needs 20.12+,
+                           # so '20' resolves to the latest 20.x
     steps:
       - uses: actions/checkout@v4
 
