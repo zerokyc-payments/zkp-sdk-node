@@ -2,7 +2,7 @@
 
 Official Node.js/TypeScript SDK for the [ZeroKYC Pay](https://zerokyc-payments.com)
 crypto payment gateway. Framework-agnostic, zero runtime dependencies (built-in
-`fetch`, `AbortController`, `node:crypto`), Node.js **20+** (22+ recommended),
+`fetch`, `AbortController`, `node:crypto`), Node.js **20.3+** (22+ recommended; `AbortSignal.any` needs 20.3),
 TypeScript `strict`. **Server-side only** — API keys and webhook verification
 must never run in a browser.
 
@@ -171,7 +171,7 @@ via `paymentCurrency: "USDT_TRON"`, or let the buyer choose with `"any"` (defaul
 
 ## Node support & SemVer
 
-Node 20 / 22 / 24 (CI-tested; 22+ recommended). ESM and CommonJS entry points
+Node 20.3 / 22 / 24 (CI-tested, minimum 20.3.0; 22+ recommended). ESM and CommonJS entry points
 with full type declarations. SemVer: 0.x collects integration feedback,
 breaking changes before 1.0 land in minor bumps and are listed in the
 [CHANGELOG](CHANGELOG.md).

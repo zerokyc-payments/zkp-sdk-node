@@ -40,23 +40,23 @@ const zkp = new ZeroKYC({
 
 // TODO implement with YOUR database (a processed_events table with a unique
 // constraint doubles as the atomic claim for concurrent deliveries)
-const store: EventStore = {
-  seen: new Set<string>(),
-  has(id: string): boolean {
-    return this.seen.has(id);
-  },
-  markProcessed(id: string): void {
-    this.seen.add(id);
-  },
-};
-const guard = new ReplayGuard(store);
+class InMemoryEventStore implements EventStore {
+  private readonly seen = new Set<string>();
+  has(eventId: string): boolean {
+    return this.seen.has(eventId);
+  }
+  markProcessed(eventId: string): void {
+    this.seen.add(eventId);
+  }
+}
+const guard = new ReplayGuard(new InMemoryEventStore());
 
 function loadOrder(_invoiceId: string): { expectedAmount: string; expectedAsset: string } | null {
   // TODO look up the local order by the ZeroKYC invoice id in YOUR tables
   return { expectedAmount: "19.90", expectedAsset: "USDT" };
 }
 
-app.post("/webhooks/zerokyc", (req: Request, res: Response) => {
+app.post("/webhooks/zerokyc", async (req: Request, res: Response) => {
   // 1. Signature + timestamp first, before touching the payload.
   let event;
   try {
@@ -77,7 +77,7 @@ app.post("/webhooks/zerokyc", (req: Request, res: Response) => {
   }
 
   // 2. At-least-once delivery: skip duplicates, answer 200 so retries stop.
-  if (guard.isDuplicate(event.id)) {
+  if (await guard.isDuplicate(event.id)) {
     res.sendStatus(200);
     return;
   }
@@ -112,7 +112,7 @@ app.post("/webhooks/zerokyc", (req: Request, res: Response) => {
   // 6. TODO mark the order paid in YOUR system (activate service, email...)
 
   // 7. Mark processed only AFTER the order update succeeded.
-  guard.markProcessed(event.id);
+  await guard.markProcessed(event.id);
   res.sendStatus(200);
 });
 

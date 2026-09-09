@@ -36,6 +36,37 @@ export class WebhookEvent {
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
       throw new Error("webhook payload is not a JSON object");
     }
+    const p = payload as Record<string, unknown>;
+    // id/type are required non-empty strings - a signed `{}` must not pass
+    if (typeof p.id !== "string" || p.id === "") {
+      throw new Error("webhook payload is missing required field 'id'");
+    }
+    if (typeof p.type !== "string" || p.type === "") {
+      throw new Error("webhook payload is missing required field 'type'");
+    }
+    if (p.data !== undefined &&
+        (typeof p.data !== "object" || p.data === null || Array.isArray(p.data))) {
+      throw new Error("webhook payload field 'data' must be a JSON object");
+    }
+    for (const key of ["invoice_id"] as const) {
+      const value = p[key];
+      if (value !== undefined && value !== null &&
+          (typeof value !== "string" || value === "")) {
+        throw new Error(`webhook payload field '${key}' must be a non-empty string`);
+      }
+    }
+    const data = (p.data as Record<string, unknown>) ?? {};
+    const dataInvoiceId = data["invoice_id"];
+    if (dataInvoiceId !== undefined && dataInvoiceId !== null &&
+        (typeof dataInvoiceId !== "string" || dataInvoiceId === "")) {
+      throw new Error("webhook payload field 'data.invoice_id' must be a non-empty string");
+    }
+    const invoiceId = p.invoice_id ?? dataInvoiceId;
+    if (p.type === "payment.confirmed" &&
+        (typeof invoiceId !== "string" || invoiceId === "")) {
+      // crediting an order requires knowing which invoice was paid
+      throw new Error("payment.confirmed payload is missing the invoice id");
+    }
     return new WebhookEvent(payload as WebhookEventData);
   }
 

@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22, 24]
+        node: ['20.3.0', 22, 24] # 20.3.0 is the minimum (AbortSignal.any)
     steps:
       - uses: actions/checkout@v4
 
@@ -27,8 +27,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Typecheck
+      - name: Typecheck (src)
         run: npm run typecheck
+
+      - name: Typecheck (examples compile against the public API)
+        run: npm run typecheck:examples
 
       - name: Test with coverage gate (webhooks/replay >= 90%)
         run: npx vitest run --coverage --coverage.include='src/webhooks/**' --coverage.include='src/replay.ts' --coverage.thresholds.lines=90 --coverage.thresholds.functions=90 --coverage.thresholds.branches=85
@@ -70,6 +73,23 @@ jobs:
           npm init -y >/dev/null
           npm install "$TGZ" >/dev/null
           node -e "const m = require('zkp-sdk-node'); if (typeof m.ZeroKYC !== 'function' || m.VERSION !== '0.1.0') process.exit(1); console.log('CJS require OK');"
+
+      - name: TypeScript consumer compiles against the shipped types
+        run: |
+          TGZ="$(pwd)/zkp-sdk-node-0.1.0.tgz"
+          mkdir -p /tmp/ts-consumer && cd /tmp/ts-consumer
+          npm init -y >/dev/null
+          npm install "$TGZ" typescript --no-audit --no-fund >/dev/null
+          cat > index.ts <<'TS'
+          import { ZeroKYC, idempotencyKey, ReplayGuard, type EventStore } from "zkp-sdk-node";
+          const zkp = new ZeroKYC({ apiKey: "pk_test_x", environment: "sandbox" });
+          const store: EventStore = { has: async () => false, markProcessed: async () => {} };
+          const guard = new ReplayGuard(store);
+          void zkp.ping();
+          void guard.isDuplicate(idempotencyKey("t", "o", 1));
+          TS
+          npx tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 index.ts
+          echo "TS consumer OK"
 
       - uses: actions/upload-artifact@v4
         with:

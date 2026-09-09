@@ -48,21 +48,30 @@ export interface RequestCallOptions {
   signal?: AbortSignal;
 }
 
+/** Injectable delay: sync fire-and-forget or (default) a real Promise-based
+ *  sleep that actually waits; the retry loop awaits either form. */
+export type Sleeper = (ms: number) => void | Promise<void>;
+
+const defaultSleeper: Sleeper = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 export class ZeroKYC {
   readonly config: Config;
   private readonly fetchLike: (url: string, init: FetchInit) => Promise<HttpResponse>;
-  private readonly sleeper: (ms: number) => void;
+  private readonly sleeper: Sleeper;
 
   constructor(
     options: ConfigOptions & {
       fetchImpl?: FetchLike;
-      /** Injectable for tests; production sleeps in milliseconds. */
-      sleeper?: (ms: number) => void;
+      /** Injectable for tests; default is a real Promise-based sleep. */
+      sleeper?: Sleeper;
     } = { apiKey: "" },
   ) {
     this.config = new Config(options);
     this.fetchLike = options.fetchImpl ?? fetchTransport;
-    this.sleeper = options.sleeper ?? ((ms) => { setTimeout(() => undefined, ms); });
+    this.sleeper = options.sleeper ?? defaultSleeper;
   }
 
   /** Create an invoice; with an idempotency key a timeout+retry returns the
@@ -133,6 +142,23 @@ export class ZeroKYC {
     return new WebhookVerifier(secret ?? this.config.webhookSecret);
   }
 
+  /** Await the sleeper; a caller abort during the wait stops the retry loop. */
+  private async wait(ms: number, signal?: AbortSignal): Promise<void> {
+    const sleep = Promise.resolve(this.sleeper(ms));
+    if (!signal) {
+      await sleep;
+      return;
+    }
+    if (signal.aborted) {
+      throw new NetworkError("aborted while waiting to retry");
+    }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = (): void => reject(new NetworkError("aborted while waiting to retry"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      void sleep.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    });
+  }
+
   private async request(
     method: string,
     path: string,
@@ -172,7 +198,7 @@ export class ZeroKYC {
         if (!opts.mayRetry || attempt >= this.config.maxRetries) {
           throw e;
         }
-        this.sleeper(backoffMs(attempt));
+        await this.wait(backoffMs(attempt), opts.signal);
         attempt += 1;
         continue;
       }
@@ -191,7 +217,7 @@ export class ZeroKYC {
             ? retryAfterMs(response.header("Retry-After"))
             : backoffMs(attempt);
         if (delayMs !== null) {
-          this.sleeper(delayMs);
+          await this.wait(delayMs, opts.signal);
           attempt += 1;
           continue;
         }

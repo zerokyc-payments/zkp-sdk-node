@@ -370,3 +370,57 @@ describe("secrets", () => {
     expect(String(err)).not.toContain("Bearer");
   });
 });
+
+describe("sleeper semantics", () => {
+  it("awaits the sleeper promise before the next attempt (no fire-and-forget)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const order: string[] = [];
+    let calls = 0;
+    const sdk = new ZeroKYC({
+      apiKey: "pk_test_demo",
+      environment: "sandbox",
+      baseUrl: BASE,
+      fetchImpl: async () => {
+        calls += 1;
+        order.push(`attempt${calls}`);
+        throw new NetworkError("timeout");
+      },
+      sleeper: (ms) => {
+        order.push(`sleep${ms}`);
+        return gate; // stays pending until the test releases it
+      },
+    });
+    const pending = sdk.getInvoice("inv_1").catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(calls).toBe(1); // second attempt must NOT start while sleeping
+    expect(order).toEqual(["attempt1", "sleep300"]);
+
+    release();
+    const err = await pending;
+    expect(err).toBeInstanceOf(NetworkError);
+    expect(order).toEqual(["attempt1", "sleep300", "attempt2", "sleep600", "attempt3"]);
+    expect(calls).toBe(3);
+  });
+
+  it("accepts sync sleepers too (fire-and-forget back-compat)", async () => {
+    let calls = 0;
+    const sdk = new ZeroKYC({
+      apiKey: "pk_test_demo",
+      environment: "sandbox",
+      baseUrl: BASE,
+      fetchImpl: async () => {
+        calls += 1;
+        throw new NetworkError("timeout");
+      },
+      sleeper: () => {
+        /* sync void */
+      },
+    });
+    await expect(sdk.getInvoice("inv_1")).rejects.toBeInstanceOf(NetworkError);
+    expect(calls).toBe(3);
+  });
+});

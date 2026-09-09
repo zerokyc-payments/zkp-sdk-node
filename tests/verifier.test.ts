@@ -96,6 +96,56 @@ describe("WebhookVerifier", () => {
     expect(() => new WebhookVerifier("")).toThrowError(/secret/);
   });
 
+
+  it.each([
+    "{}",
+    '{"type":"payment.confirmed"}',
+    '{"id":"evt_1"}',
+    '{"id":"","type":"payment.confirmed"}',
+    '{"id":"e","type":"x","invoice_id":42}',
+    '{"id":"e","type":"x","data":[1,2]}',
+    '{"id":"e","type":"x","data":"nope"}',
+    '{"id":"e","type":"payment.confirmed"}',
+    '{"id":"e","type":"payment.confirmed","invoice_id":""}',
+    '{"id":"e","type":"payment.confirmed","data":{"invoice_id":null}}',
+    '{"id":123,"type":"x"}',
+  ])("signed payload %j is rejected as MALFORMED_PAYLOAD", (body) => {
+    const verifier = make();
+    const header = verifier.sign(body, VECTOR_TS);
+    const result = verifier.check(body, header, { now: VECTOR_TS });
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe(WebhookVerificationError.MALFORMED_PAYLOAD);
+
+    let thrown: unknown;
+    try {
+      verifier.verify(body, header, { now: VECTOR_TS });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(WebhookVerificationError);
+    expect((thrown as WebhookVerificationError).reason).toBe(
+      WebhookVerificationError.MALFORMED_PAYLOAD,
+    );
+  });
+
+  it("WebhookEvent.fromJson names the missing required fields", () => {
+    expect(() => WebhookEvent.fromJson({})).toThrowError(/'id'/);
+    expect(() => WebhookEvent.fromJson({ id: "e" })).toThrowError(/'type'/);
+    expect(() => WebhookEvent.fromJson({ id: "e", type: "payment.confirmed" })).toThrowError(
+      /invoice id/,
+    );
+    expect(() => WebhookEvent.fromJson(null)).toThrowError(/not a JSON object/);
+    expect(() => WebhookEvent.fromJson([1])).toThrowError(/not a JSON object/);
+  });
+
+  it("a signed empty object is NOT a valid event", () => {
+    const verifier = make();
+    const header = verifier.sign("{}", VECTOR_TS);
+    const result = verifier.check("{}", header, { now: VECTOR_TS });
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe(WebhookVerificationError.MALFORMED_PAYLOAD);
+  });
+
   it("resolves the production payload shape (invoice id + paid asset in data.option)", () => {
     const body = JSON.stringify({
       id: "evt_qhLi9",

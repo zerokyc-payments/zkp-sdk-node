@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { idempotencyKey } from "../src/client.js";
-import { compareDecimals, ReplayGuard, type EventStore } from "../src/replay.js";
+import { compareDecimals, isValidDecimal, ReplayGuard, type EventStore } from "../src/replay.js";
 import { WebhookEvent } from "../src/models/webhook.js";
 import { StatusMapper } from "../src/status.js";
 
@@ -71,14 +71,30 @@ describe("idempotencyKey", () => {
 });
 
 describe("ReplayGuard", () => {
-  it("isDuplicate is pure until markProcessed", () => {
+  it("isDuplicate is pure until markProcessed (sync store)", async () => {
     const guard = new ReplayGuard(new InMemoryEventStore());
-    expect(guard.isDuplicate("evt_1")).toBe(false);
-    expect(guard.isDuplicate("evt_1")).toBe(false); // crash-safe: still unprocessed
+    expect(await guard.isDuplicate("evt_1")).toBe(false);
+    expect(await guard.isDuplicate("evt_1")).toBe(false); // crash-safe: still unprocessed
 
-    guard.markProcessed("evt_1");
-    expect(guard.isDuplicate("evt_1")).toBe(true);
-    expect(guard.isDuplicate("evt_2")).toBe(false);
+    await guard.markProcessed("evt_1");
+    expect(await guard.isDuplicate("evt_1")).toBe(true);
+    expect(await guard.isDuplicate("evt_2")).toBe(false);
+  });
+
+  it("works with an async database-backed store", async () => {
+    const store: EventStore = {
+      async has(id: string): Promise<boolean> {
+        await Promise.resolve();
+        return id === "evt_9";
+      },
+      async markProcessed(_id: string): Promise<void> {
+        await Promise.resolve();
+      },
+    };
+    const guard = new ReplayGuard(store);
+    expect(await guard.isDuplicate("evt_9")).toBe(true);
+    expect(await guard.isDuplicate("evt_1")).toBe(false);
+    await guard.markProcessed("evt_1"); // resolves without throwing
   });
 
   const prodEvent = WebhookEvent.fromJson({
@@ -102,7 +118,7 @@ describe("ReplayGuard", () => {
     expect(guard.matchesOrder(prodEvent, "inv_9", { minAmount: "19.90", asset: "USDT_BTC" })).toBe(false);
   });
 
-  it("matches the legacy docs-vector shape", () => {
+  it("matches the legacy docs-vector shape by bare ticker", () => {
     const guard = new ReplayGuard(new InMemoryEventStore());
     const legacy = WebhookEvent.fromJson({
       id: "evt_2",
@@ -110,16 +126,62 @@ describe("ReplayGuard", () => {
       invoice_id: "inv_9",
       data: { asset: "USDT_TRON", amount: "20.5" },
     });
-    expect(guard.matchesOrder(legacy, "inv_9", { minAmount: "19.90", asset: "USDT_TRON" })).toBe(true);
+    // bare ticker expectation: any network is acceptable
+    expect(guard.matchesOrder(legacy, "inv_9", { minAmount: "19.90", asset: "USDT" })).toBe(true);
+    // asset id expectation REQUIRES the webhook to carry the network
+    expect(guard.matchesOrder(legacy, "inv_9", { minAmount: "19.90", asset: "USDT_TRON" })).toBe(false);
+  });
+
+  it("asset id expectations require a matching network (fail-closed)", () => {
+    const guard = new ReplayGuard(new InMemoryEventStore());
+    const mk = (network: string | null) =>
+      WebhookEvent.fromJson({
+        id: "e",
+        type: "payment.confirmed",
+        data: {
+          invoice_id: "i",
+          option: network === null
+            ? { asset: "USDT", paid_amount: "20.5" }
+            : { asset: "USDT", network, paid_amount: "20.5" },
+        },
+      });
+    expect(guard.matchesOrder(mk(null), "i", { asset: "USDT_TRON" })).toBe(false); // missing network
+    expect(guard.matchesOrder(mk("tron"), "i", { asset: "USDT_TRON" })).toBe(true); // correct
+    expect(guard.matchesOrder(mk("polygon"), "i", { asset: "USDT_TRON" })).toBe(false); // wrong
+    expect(guard.matchesOrder(mk(null), "i", { asset: "USDT" })).toBe(true); // ticker: any network
+    expect(guard.matchesOrder(mk("polygon"), "i", { asset: "USDT" })).toBe(true);
+  });
+
+  it("fails closed on unparseable paid amounts (never 'enough')", () => {
+    const guard = new ReplayGuard(new InMemoryEventStore());
+    for (const bad of ["NaN", "Infinity", "abc", "1e3", "1.2.3", "", " 20 ", "-1"]) {
+      const event = WebhookEvent.fromJson({
+        id: "e",
+        type: "payment.confirmed",
+        data: { invoice_id: "i", option: { asset: "USDT", network: "tron", paid_amount: bad } },
+      });
+      expect(guard.matchesOrder(event, "i", { minAmount: "19.90" })).toBe(false);
+    }
+    // invalid expectation is also rejected instead of crashing
+    const ok = WebhookEvent.fromJson({
+      id: "e",
+      type: "payment.confirmed",
+      data: { invoice_id: "i", option: { asset: "USDT", network: "tron", paid_amount: "20.5" } },
+    });
+    expect(guard.matchesOrder(ok, "i", { minAmount: "abc" })).toBe(false);
+    expect(guard.matchesOrder(ok, "i", { minAmount: "-1" })).toBe(false);
   });
 
 
-  it("handles negative and zero-sign decimals without float drift", () => {
-    expect(Math.sign(compareDecimals("-1", "1"))).toBe(-1);
-    expect(Math.sign(compareDecimals("1", "-1"))).toBe(1);
-    expect(Math.sign(compareDecimals("-2.5", "-1"))).toBe(-1);
-    expect(Math.sign(compareDecimals("-1", "-2.5"))).toBe(1);
-    expect(Math.sign(compareDecimals("-1", "-1.0"))).toBe(0);
+  it("throws on invalid decimal strings instead of comparing silently", () => {
+    for (const bad of ["NaN", "Infinity", "abc", "1e3", "1.2.3", "", " 20 ", "-1", "1E-2", "12.", ".99"]) {
+      expect(() => compareDecimals(bad, "1")).toThrowError(TypeError);
+      expect(() => compareDecimals("1", bad)).toThrowError(TypeError);
+      expect(isValidDecimal(bad)).toBe(false);
+    }
+    for (const good of ["0", "0.0", "1", "19.90", "0.0000001"]) {
+      expect(isValidDecimal(good)).toBe(true);
+    }
   });
 
   it("refuses asset matching when the event carries no asset", () => {

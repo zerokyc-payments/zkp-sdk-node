@@ -30,16 +30,16 @@ const zkp = new ZeroKYC({
 
 // TODO implement with YOUR database (a processed_events table with a unique
 // constraint doubles as the atomic claim for concurrent deliveries)
-const store: EventStore = {
-  seen: new Set<string>(),
-  has(id: string): boolean {
-    return this.seen.has(id);
-  },
-  markProcessed(id: string): void {
-    this.seen.add(id);
-  },
-};
-const guard = new ReplayGuard(store);
+class InMemoryEventStore implements EventStore {
+  private readonly seen = new Set<string>();
+  has(eventId: string): boolean {
+    return this.seen.has(eventId);
+  }
+  markProcessed(eventId: string): void {
+    this.seen.add(eventId);
+  }
+}
+const guard = new ReplayGuard(new InMemoryEventStore());
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // 1. Signature + timestamp first, before touching the payload.
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // 2. At-least-once delivery: skip duplicates, answer 200 so retries stop.
-  if (guard.isDuplicate(event.id)) {
+  if (await guard.isDuplicate(event.id)) {
     return NextResponse.json({ ok: true });
   }
 
@@ -88,6 +88,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // if (!invoice.isPaid) return NextResponse.json({ ok: true });
 
   // 7. TODO mark the order paid in YOUR system, THEN mark the event processed
-  guard.markProcessed(event.id);
+  await guard.markProcessed(event.id);
   return NextResponse.json({ ok: true });
 }
