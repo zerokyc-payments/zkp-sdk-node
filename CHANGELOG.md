@@ -25,7 +25,7 @@ Initial beta. Public contract mirrors zkp-sdk-php and zkp-sdk-python.
   null`, never a crash); caller aborts are never retried.
 - Zero runtime dependencies (built-in fetch + AbortController + node:crypto);
   SDK User-Agent; dual ESM/CJS build with type declarations.
-- Vitest suite (126 tests incl. abort/timeout/Retry-After/payload-validation
+- Vitest suite (134 tests incl. abort/timeout/Retry-After/payload-validation
   matrices); async database-backed EventStore support; fail-closed decimal
   matching (invalid amounts never compare as paid); asset-id expectations
   require a matching network; signed-but-malformed payloads rejected as
