@@ -166,7 +166,7 @@ const event = new WebhookVerifier("whsec_zkp_test_vector_2026").verify(
 
 ## Assets
 
-ETH, USDT (Ethereum ERC-20), USDT (TRC-20), USDC/USDT (Polygon, Arbitrum), BTC, XMR, TON, USDT-TON. Pin one
+USDT on four networks (TRC-20, BEP-20 on BSC, ERC-20 on Ethereum, TON jetton), USDC/USDT (Polygon, Arbitrum), native ETH, native BNB, native TRX, LTC, BTC, XMR and native TON. Pin one
 via `paymentCurrency: "USDT_TRON"`, or let the buyer choose with `"any"` (default).
 
 ## Node support & SemVer
